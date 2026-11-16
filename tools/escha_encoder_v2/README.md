@@ -61,7 +61,11 @@ The stock YaQA loader places the entire BF16 model on one device, which does not
 fit a4090. `hf_stream.py` changes residency only: CPU-backed original parameters,
 one decoder block on CUDA, saved-tensor hooks storing activation intermediates
 on CPU and parameter views against their original CPU storage. View offsets are
-preserved. Saved activation copies are bounded to24GiB per row. The own reservation
+preserved. Duplicate saved views share version-aware CPU snapshots without holding
+GPU storage alive. Non-reentrant block activation checkpointing recomputes each
+block during backward; recomputation is excluded from Collector forward counts.
+This preserves the 2048-token calibration and BF16 precision rather than shortening
+the data. Saved activation copies are bounded to24GiB per row. The own reservation
 memory limit becomes96GiB only after V1 has finished; the 3060 service is untouched.
 
 Before expensive sensitivity/factor collection, V2 must pass:

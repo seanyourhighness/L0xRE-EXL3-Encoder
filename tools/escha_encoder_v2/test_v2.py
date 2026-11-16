@@ -110,7 +110,7 @@ class GradientTests(unittest.TestCase):
         model.layers[0].weight.data=storage[17:].view(8,8)
         for p in model.parameters():p.requires_grad_(False)
         x=torch.randn(3,8,dtype=torch.float64,requires_grad=True);baseline=model(x);baseline.square().sum().backward();grad=x.grad.clone()
-        stream=Streaming(model,'cpu');y=x.detach().clone().requires_grad_(True)
+        stream=Streaming(model,'cpu',activation_checkpoint=True);y=x.detach().clone().requires_grad_(True)
         try:
             with stream.saved_tensors():result=model(y);result.square().sum().backward()
             torch.testing.assert_close(result,baseline,rtol=0,atol=0);torch.testing.assert_close(y.grad,grad,rtol=0,atol=0)

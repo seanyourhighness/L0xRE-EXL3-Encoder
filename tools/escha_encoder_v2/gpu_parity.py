@@ -5,7 +5,7 @@ import importlib.util
 import sys
 import torch
 from common import TREE,atomic_json,require,sha
-from hf_stream import Streaming
+from hf_stream import Streaming,guard_collector_recompute
 
 
 class Toy(torch.nn.Module):
@@ -27,7 +27,8 @@ def main():
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     base=Toy().eval()
     for param in base.parameters():param.requires_grad_(False)
-    resident=copy.deepcopy(base).cuda();stream=Streaming(base)
+    resident=copy.deepcopy(base).cuda();stream=Streaming(base,activation_checkpoint=True)
+    guard_collector_recompute(module.Collector,lambda:stream.recomputing>0)
     x=torch.randn(32,128,device='cuda',requires_grad=True);y=x.detach().clone().requires_grad_(True)
     collectors=[];handles=[]
     for model in (resident,base):
@@ -41,6 +42,7 @@ def main():
         torch.testing.assert_close(actual,expected,rtol=1e-6,atol=1e-6)
         torch.testing.assert_close(y.grad,x.grad,rtol=1e-5,atol=1e-5)
         torch.testing.assert_close(collectors[0].hout,collectors[1].hout,rtol=1e-5,atol=1e-5)
+        require(collectors[0].count==collectors[1].count,'Recomputation duplicated Fisher samples')
         from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig
         from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5GatedDeltaNet
         class MiniGDN(torch.nn.Module):
@@ -61,7 +63,7 @@ def main():
             def get_input_embeddings(self):return self.identity
             def get_output_embeddings(self):return self.identity
             def forward(self,x):return self.layers[0](x)
-        gdn=MiniGDN().to(dtype=torch.bfloat16).eval();reference=copy.deepcopy(gdn).cuda();offload=Streaming(gdn)
+        gdn=MiniGDN().to(dtype=torch.bfloat16).eval();reference=copy.deepcopy(gdn).cuda();offload=Streaming(gdn,activation_checkpoint=True)
         gx=(torch.randn(1,32,128,device='cuda',dtype=torch.bfloat16)*.1).requires_grad_(True)
         gy=gx.detach().clone().requires_grad_(True)
         try:

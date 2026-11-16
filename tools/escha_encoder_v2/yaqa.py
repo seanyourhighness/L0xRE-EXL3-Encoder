@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 import torch
 from common import TREE,atomic_json,require,sha
-from hf_stream import Streaming,cpu_model
+from hf_stream import Streaming,cpu_model,guard_collector_recompute
 
 
 def parser():
@@ -27,9 +27,10 @@ def main():
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     holders=[]
     def load(args,devices):
-        model=cpu_model(args,devices);stream=Streaming(model)
+        model=cpu_model(args,devices);stream=Streaming(model,activation_checkpoint=True)
         holders.append(stream);return model
     module.load_model=load
+    guard_collector_recompute(module.Collector,lambda:any(x.recomputing for x in holders))
     args=argparse.Namespace(model_dir=a.model_dir,cal_data=a.calibration,out_dir=a.out,device='0',hessian_device='0',
                             reserve_vram=None,layers=(a.layer,end),head=False,rows=a.rows,skip_rows=a.skip_rows,cols=a.cols,
                             sides=a.sides,passes=a.passes,unweighted=False,diag=False,samples=a.samples,temperature=1.,

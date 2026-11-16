@@ -4,15 +4,17 @@ Numerical forward, Fisher sampling, factor accumulation and LDLQ remain upstream
 Only parameter residency and autograd's saved-tensor storage change.
 """
 from contextlib import contextmanager
+from contextlib import nullcontext
 import re
 import torch
 from torch.multiprocessing.reductions import StorageWeakRef
 
 
 class Streaming:
-    def __init__(self,model,device='cuda:0'):
+    def __init__(self,model,device='cuda:0',activation_checkpoint=False):
         self.model=model;self.device=torch.device(device);self.registry={};self.handles=[];self.saved_bytes=0
         self.saved_cache={};self.cache_hits=0;self.current_module=None
+        self.recomputing=0;self.original_forwards=[]
         names={id(module):name for name,module in model.named_modules()}
         blocks=[]
         for name,module in model.named_modules():
@@ -46,6 +48,23 @@ class Streaming:
         for module in unique:
             self.handles.append(module.register_forward_pre_hook(enter))
             self.handles.append(module.register_forward_hook(leave,always_call=True))
+        if activation_checkpoint:
+            from torch.utils.checkpoint import checkpoint
+            for block in blocks:
+                original=block.forward;self.original_forwards.append((block,original))
+                @contextmanager
+                def recompute(block=block):
+                    self.recomputing+=1
+                    try:
+                        enter(block,())
+                        yield
+                    finally:
+                        leave(block,(),None);self.recomputing-=1
+                def forward(*args,_original=original,_recompute=recompute,**kwargs):
+                    if not torch.is_grad_enabled():return _original(*args,**kwargs)
+                    return checkpoint(_original,*args,use_reentrant=False,
+                            context_fn=lambda:(nullcontext(),_recompute()),**kwargs)
+                block.forward=forward
         def move_inputs(module,args,kwargs):
             self.saved_bytes=0;self.saved_cache.clear();self.cache_hits=0
             def move(x):return x.to(self.device) if isinstance(x,torch.Tensor) else x
@@ -80,10 +99,20 @@ class Streaming:
         with torch.autograd.graph.saved_tensors_hooks(self.pack,self.unpack):yield
 
     def close(self):
+        for module,forward in self.original_forwards:module.forward=forward
         for handle in self.handles:handle.remove()
         for param in self.model.parameters():param.data=self.cpu[id(param)]
         self.registry.clear()
         self.saved_cache.clear()
+
+
+def guard_collector_recompute(collector,predicate):
+    """Checkpoint recomputation must not count a second calibration forward."""
+    original=collector.forward
+    def forward(self,kind,x,leader):
+        if predicate():return
+        return original(self,kind,x,leader)
+    collector.forward=forward
 
 
 def cpu_model(args,devices):
