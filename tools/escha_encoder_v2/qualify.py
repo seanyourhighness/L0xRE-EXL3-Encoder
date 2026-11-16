@@ -29,7 +29,10 @@ def main():
     rows=np.fromfile(str(report)+'.rows',np.float32).reshape(-1,4);mask=np.fromfile(ref/'gen.u8',np.uint8)
     require(counts and all(int(v)==0 for v in counts) and len(mask)==len(rows) and np.isfinite(rows).all(),'Native full-model quality execution failed')
     mean=float(rows[mask!=0,0].astype(np.float64).mean());comparisons={}
-    for label,baseline in [('B02-A2',assets/'evidence/stacking-loop/B02/A2/full116.json'),('V1',v1/'full-development116.json')]:
+    parent=Path(plan.get('parent_plan',root/'plan.json')).parent
+    baselines=[('B02-A2',assets/'evidence/stacking-loop/B02/A2/full116.json'),('V1',v1/'full-development116.json')]
+    if (parent/'head-control-native.complete.json').exists():baselines.append(('V1-production-head',parent/'head-control-native.json'))
+    for label,baseline in baselines:
         out=root/('paired-'+label+'.json')
         if not out.exists():
             subprocess.run([sys.executable,str(assets/'tools/paired_quality_subset.py'),'--baseline',str(baseline),
@@ -40,7 +43,9 @@ def main():
     # Reuse the exact V1 qualification implementation/fixtures, with a separate
     # candidate/cache namespace. Hard links add no second model-sized copy.
     alias=root/'full-escha.gguf'
-    if not alias.exists():os.link(model,alias)
+    if not alias.exists():
+        if model.is_symlink():alias.symlink_to(model.resolve())
+        else:os.link(model,alias)
     catalog=root.parent/'benchlocal099'
     if not catalog.exists():catalog.symlink_to(v1.parent/'benchlocal099',target_is_directory=True)
     v1g=read(v1/'compatibility-gates.json');g=dict(v1g,full_model_exported=True,layer_runtime_passed=True,

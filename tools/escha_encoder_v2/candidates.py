@@ -42,14 +42,55 @@ def cleanup(candidate):
        reason='Preserve all final model weights/native rows/source pins/factors; reclaim only owned reproducible fit/export scratch to keep the remaining ablations within SSD budget'))
 
 
+def compiled_checkpoint(candidate,policy,recipe):
+    """The durable compiled shards replace temporary per-module/state copies."""
+    from safetensors import safe_open
+    candidate=Path(candidate);out=candidate/'compiled-checkpoint.json'
+    if out.exists():
+        for p,h in read(out)['shards'].items():require(sha(candidate/p)==h,'Compiled checkpoint changed')
+        return
+    keys={};shards=sorted((candidate/'converted').glob('*.safetensors'));require(bool(shards),'No compiled fit checkpoint')
+    for file in shards:
+        with safe_open(file,framework='np') as f:
+            for key in f.keys():require(key not in keys,'Duplicate compiled tensor');keys[key]=file
+    for r in policy['projections']:
+        key=r['source_key'];require(all(key+'.'+s in keys for s in ('trellis','suh','svh','mcg')),'Incomplete compiled model')
+        with safe_open(keys[key+'.trellis'],framework='np') as f:
+            require(tuple(f.get_slice(key+'.trellis').get_shape())==(r['ic']//16,r['oc']//16,16*recipe['tensors'][key]),'Compiled width differs')
+    proof=dict(shards={str(f.relative_to(candidate)):sha(f) for f in shards},reason='Durable compiled tensor checkpoint retains every fitted weight before removing redundant module/state scratch')
+    atomic_json(out,proof)
+    for name in ('conversion/qtensors','conversion/ckpt','conversion/ckpt_old'):
+        p=candidate/name
+        if p.exists():require(not p.is_symlink() and p.resolve().is_relative_to(candidate.resolve()),'Unsafe temporary path');shutil.rmtree(p)
+
+
 def run(a):
     from run import Stages
     plan=read(a.plan);root=Path(plan['work']);s=Stages(root);here=Path(__file__).parent;python=sys.executable
     trace=root/'calibration.safetensors';factors=root/'hessians';policy=plan['policy'];allocation=read(root/'allocation/recipe.yaml')
     changed=bool(validate_recipe(policy,allocation)['changed_projections'])
-    specs=[('fixed-yaqa',root/'allocation/fixed-recipe.yaml',True)]
+    specs=[('fixed-one-sided',root/'allocation/fixed-recipe.yaml',False),('fixed-yaqa',root/'allocation/fixed-recipe.yaml',True)]
     if changed:specs.extend([('allocation-only',root/'allocation/recipe.yaml',False),('combined',root/'allocation/recipe.yaml',True)])
     records=[]
+    # The head-only carry-forward is a measured development candidate too; do
+    # not discard it if expensive fits fail to beat an already-earned head.
+    control=read(root/'head-control-native.complete.json');head=root/'candidates/V1-body-production-head';head.mkdir(parents=True,exist_ok=True)
+    child=dict(plan,work=str(head),candidate_label='V1-body-production-head',parent_plan=str(root/'plan.json'),fit_method='No new fit; existing V1 body and unchanged production vocabulary')
+    atomic_json(head/'plan.json',child)
+    for link,target in [(head/'quant.gguf',Path(plan['head_control_model'])),
+                        (head/'quant.gguf.receipt.json',Path(str(plan['head_control_model'])+'.receipt.json')),
+                        (head/'role-probe',root/'role-probe')]:
+        if not link.exists():link.symlink_to(target)
+    require(sha(head/'quant.gguf')==control['candidate_sha256'],'Head control model changed')
+    require(sha(root/'head-control-native.json')==control['report_sha256'] and sha(str(root/'head-control-native.json')+'.rows')==control['rows_sha256'],
+            'Head control native rows changed')
+    for target,source in [('development116.json',root/'head-control-native.json'),('development116.json.rows',Path(str(root/'head-control-native.json')+'.rows')),
+                          ('development116.log',root/'head-control-native.log')]:
+        p=head/target
+        if not p.exists():shutil.copy2(source,p)
+    s.run('head-control-paired',[python,here/'qualify.py','--plan',head/'plan.json','--native-only'],[head/'native.complete.json'])
+    report=read(head/'paired-B02-A2.json');records.append(dict(label='V1-body-production-head',model=str(head/'quant.gguf'),
+        sha256=control['candidate_sha256'],mean=report['candidate_mean'],gate=native_gate(report),native_report_sha256=sha(head/'paired-B02-A2.json')))
     for label,recipe,yaqa in specs:
         candidate=root/'candidates'/label;candidate.mkdir(parents=True,exist_ok=True)
         child=dict(plan,work=str(candidate),candidate_label=label,parent_plan=str(root/'plan.json'),fit_method='two-sided-YaQA' if yaqa else 'V1-one-sided')
@@ -67,6 +108,7 @@ def run(a):
                 '-cd',trace,'-cr',str(plan['calibration_rows']),'-cc',str(plan['calibration_cols']),'--scaled_hessian','-d','0','-cpi','120']
             if yaqa:cmd+=['--hessians',factors,'--out_scales','yaqa']
             s.run(label+'-fit',cmd,[candidate/'converted/quantization_config.json'],timeout=48*3600)
+            compiled_checkpoint(candidate,policy,read(recipe))
             s.run(label+'-export',[python,here/'pack.py','--contract',root/'contract.json','--recipe',recipe,
                 '--checkpoint',candidate/'converted','--work',candidate/'export-checkpoints','--output',candidate/'quant.gguf',
                 '--template-sha256',plan['template_sha256'],'--workers',str(plan['pack_workers'])],

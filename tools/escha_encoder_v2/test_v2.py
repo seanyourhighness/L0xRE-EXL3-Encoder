@@ -159,6 +159,21 @@ class GradientTests(unittest.TestCase):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_compiled_weights_preserved_when_redundant_module_scratch_reclaimed(self):
+        from candidates import compiled_checkpoint
+        from safetensors.numpy import save_file
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);(root/'converted').mkdir();(root/'conversion/qtensors').mkdir(parents=True)
+            key='model.language_model.layers.0.mlp.gate_proj'
+            arrays={key+'.trellis':np.zeros((1,1,32),np.int16),key+'.suh':np.ones(16,np.float16),key+'.svh':np.ones(16,np.float16),
+                    key+'.mcg':np.array(-877912083,np.int32)}
+            file=root/'converted/model.safetensors';save_file(arrays,str(file));before=sha(file)
+            (root/'conversion/qtensors/redundant').write_text('scratch')
+            policy=dict(projections=[dict(source_key=key,ic=16,oc=16)])
+            compiled_checkpoint(root,policy,dict(tensors={key:2}))
+            self.assertEqual(sha(file),before);self.assertFalse((root/'conversion/qtensors').exists())
+            self.assertTrue((root/'compiled-checkpoint.json').exists())
+
     def test_teacher_cases_require_scored_assistant_tokens_inside_prefix(self):
         from check_teacher import cases
         from types import SimpleNamespace

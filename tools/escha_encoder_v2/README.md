@@ -146,8 +146,9 @@ This is a representative diagnostic, not proof every tensor follows one ratio.
 Independent SC rankings must reach Spearman.75 and weighted width disagreement
 <=.25. The mean-table exact recipe must not regress either replicate. These
 predeclared screening thresholds are hypotheses; a failure stops for review.
-An unchanged optimum is permitted and labeled. The fixed-map YaQA control is
-always retained; changed maps also get allocation-only and combined candidates.
+An unchanged optimum is permitted and labeled. Fixed-map one-sided and YaQA
+controls always run; changed maps also get one-sided and YaQA candidates,
+forming a true2x2 with the same calibration data.
 No forced swaps or claim that exact predicted allocation proves model quality.
 
 Each candidate gets native paired development116 KLD vs B02-A2 **and V1**.
@@ -169,5 +170,26 @@ limitations are recorded. No automatic promotion.
 Final GGUFs, native rows, source hashes, recipes, factors and failure logs are
 preserved. After each candidate has a verified final model and native output,
 only that new candidate's reproducible conversion/export scratch is reclaimed,
-with a cleanup receipt, to fit all three ablations within current disk capacity.
+with a cleanup receipt, to fit the ablations within current disk capacity.
 This never removes V1, B02-A2, calibration sources, factors or final weights.
+
+## Preserve earned production head changes
+
+A source audit found B02-A2 differs from the original V1 geometry template in all
+three output-head tensors (codes/scales/zero-points), while embeddings and output
+norm match. V2 exports therefore preserve **B02-A2's entire nonbody payload**;
+the400coded body projections are still fitted from original BF16 source, within
+the same K2/K3 geometry/byte contract. Native role fixtures retain the original
+geometry template solely as a format/dispatch test.
+
+`head_control.py` verifies that the only nonbody differences are those three head
+tensors, then measures a labeled V1-body/production-head transplant. There is no
+new vocabulary fitting, width, codebook or runtime change. Native results compare
+V2 with B02-A2, raw V1, and this head-matched control. That control is eligible
+for the same development/task/speed/final-holdout gates; it is not silently discarded
+if costly fitting fails to improve it. Production remains untouched.
+
+Compiled shards retain every encoded weight and their hash manifest before
+redundant per-module quantization/state scratch is reclaimed. Final GGUFs and
+native reports remain preserved. This permits the fourth factorial control
+without deleting V1 or fitted final weights for space.

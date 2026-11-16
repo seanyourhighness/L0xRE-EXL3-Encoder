@@ -16,12 +16,18 @@ from common import TREE,UPSTREAM_COMMIT,MCG,MODEL_BYTES,atomic_json,read,require
 def prepare(a):
     root=Path(a.work).resolve();root.mkdir(parents=True,exist_ok=True)
     policy=contract(a.template,a.bridge_source)
+    geometry_template=policy['template'];geometry_sha='b0849250c633aa93853bf119a877dbdafdd7b1a4ebb672bd6b6a1439906f3543'
+    production=Path(a.assets)/'artifacts/stacking-loop/B02/A2/quant.gguf'
+    policy['geometry_template']=geometry_template;policy['template']=str(production.resolve())
     source=Path(a.assets)/'data/teacher'
     data=dict(format='l0xre-escha-v2',upstream_commit=UPSTREAM_COMMIT,work=str(root),assets=str(Path(a.assets).resolve()),
               v1=str(Path(a.v1).resolve()),source=str(source.resolve()),source_revision='1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0',
               extension=str(Path(a.v1).resolve().parent/'torch-extensions/exllamav3_ext/exllamav3_ext.so'),
               extension_sha256=sha(Path(a.v1).resolve().parent/'torch-extensions/exllamav3_ext/exllamav3_ext.so'),
-              template=policy['template'],template_sha256='b0849250c633aa93853bf119a877dbdafdd7b1a4ebb672bd6b6a1439906f3543',
+              template=policy['template'],template_sha256='ecdd8679d7cfe023cadb3eb8726fb09a869a6f71f69c183d71144973b0785bc7',
+              role_template=geometry_template,role_template_sha256=geometry_sha,
+              head_control_model=str(Path.home()/'work/l0xre-exl3-v2-head-control-20261116.gguf'),
+              vocabulary_policy='Carry B02-A2 production output-head codes/scales/zero-points and other nonbody tensors unchanged; compare against a labeled V1-body/production-head control',
               bridge_source=str(Path(a.bridge_source).resolve()),policy=policy,
               calibration_rows=250,calibration_cols=2048,measurement_rows=24,measurement_cols=1024,
               measurement_critical_min=4,measurement_draws=2,measurement_replicates=['A','B'],measurement_memory_gb=24,rfn_scales=[2.5,1.96,1.0,.5],
@@ -135,6 +141,7 @@ def run(a):
         current[item['file']]=dict(stat=signature,sha256=item['sha256'])
     atomic_json(cache,current)
     require(sha(plan['template'])==plan['template_sha256'],'Template changed')
+    require(sha(plan['role_template'])==plan['role_template_sha256'],'Original geometry template changed')
     require(sha(plan['bridge_source'])==policy['bridge_source_sha256'],'Runtime dispatch source changed')
     import shutil
     # Split the ~100GB packed output factors between two owned stores. Leave
@@ -146,7 +153,7 @@ def run(a):
                     'candidates/*/export-checkpoints/*/*.npy','candidates/*/conversion/ckpt*/*.safetensors'):
         for f in root.glob(pattern):
             st=f.stat();key=(st.st_dev,st.st_ino)
-            if key not in seen:occupied+=st.st_size;seen.add(key)
+            if key not in seen and st.st_dev==root.stat().st_dev:occupied+=st.st_size;seen.add(key)
     device=root.stat().st_dev;demands[device]=max(80*1024**3-occupied,16*1024**3);paths[device]=root
     for index,store_name in enumerate(plan['factor_stores']):
         store=Path(store_name);store.mkdir(parents=True,exist_ok=True);device=store.stat().st_dev;paths[device]=store
@@ -158,6 +165,9 @@ def run(a):
         expected=sum((r['oc']*(r['oc']+1)//2+r['oc'])*4 for r in policy['projections'] if (r['layer']//plan['yaqa_chunk'])%len(plan['factor_stores'])==index)
         present=sum(f.stat().st_size for f in store.glob('*/*.safetensors'))
         demands[device]=demands.get(device,20*1024**3)+max(expected-present,0)
+    control=Path(plan['head_control_model']);control.parent.mkdir(parents=True,exist_ok=True)
+    if not control.exists():
+        device=control.parent.stat().st_dev;paths[device]=control.parent;demands[device]=demands.get(device,20*1024**3)+MODEL_BYTES
     for device,needed in demands.items():require(shutil.disk_usage(paths[device]).free>needed,'Insufficient factor/workspace capacity: '+str(paths[device]))
     # Own reservation only; persist no system-wide memory/CPU policy change.
     subprocess.run(['systemctl','--user','set-property','--runtime','l0xre-exl3-4090-reservation.service','MemoryMax=96G'],check=True)
@@ -200,6 +210,7 @@ def run(a):
     require(read(root/'rate-probes.json')['recommended_max_noise_scale']<=max(plan['rfn_scales']),
             'Actual K2/K3 rate ratio falls outside the frozen noise range; inspect and extend a new measurement plan')
     s.run('rfn',[python,TREE/'sc_rfn_probe.py','-mq',v1/'full/converted','-mr',source,'-d','0','-o',root/'rfn.json'],[root/'rfn.json'])
+    s.run('head-baseline-control',[python,here/'head_control.py','--plan',root/'plan.json'],[root/'head-control-native.complete.json'])
     anchor={r['key']:r['rfn'] for r in read(root/'rfn.json')['results']}
     measured=read(root/'rate-probes.json')['results'];coverage={}
     for value in measured:

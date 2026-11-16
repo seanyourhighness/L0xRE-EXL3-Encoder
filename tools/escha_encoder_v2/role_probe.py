@@ -18,7 +18,8 @@ from structural_export import export
 def main():
     p=argparse.ArgumentParser();p.add_argument('--plan',required=True);a=p.parse_args();plan=read(a.plan)
     root=Path(plan['work'])/'role-probe';root.mkdir(parents=True,exist_ok=True);assets=Path(plan['assets'])
-    reader=GGUFReader(plan['template']);t={x.name:x for x in reader.tensors};rows={r['name']:r for r in plan['policy']['projections']}
+    template=plan.get('role_template',plan['template']);template_sha=plan.get('role_template_sha256',plan['template_sha256'])
+    reader=GGUFReader(template);t={x.name:x for x in reader.tensors};rows={r['name']:r for r in plan['policy']['projections']}
     widths={'blk.0.attn_gate':3,'blk.0.ssm_out':3,'blk.0.ffn_gate':3,'blk.0.ffn_up':2,'blk.0.ffn_down':2,
             'blk.3.attn_k':3,'blk.3.attn_v':3,'blk.1.ffn_up':2,'blk.2.ffn_gate':3}
     patches={}
@@ -30,7 +31,8 @@ def main():
         for suffix,v in values.items():
             file=root/(name+'.'+suffix+'.npy');np.save(file,v);patches[name+'.'+suffix]=str(file)
     model=root/'dispatch-only.gguf'
-    if not model.exists():export(plan['template'],model,patches,plan['template_sha256'])
+    if not model.exists():export(template,model,patches,template_sha)
+    else:require(sha(model)==read(str(model)+'.receipt.json')['sha256'],'Existing role fixture changed')
     spec=importlib.util.spec_from_file_location('frozen_runtime_admission',assets/'tools/runtime-profile-v1/audit_fast_path_v1.py')
     audit=importlib.util.module_from_spec(spec);spec.loader.exec_module(audit);result=audit.audit(model,plan['bridge_source'])
     require(result['passed'] and all(result['role_counts'][str(i)]>0 for i in range(12)),'Not all runtime roles covered')
