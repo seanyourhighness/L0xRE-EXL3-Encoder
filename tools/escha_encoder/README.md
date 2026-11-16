@@ -68,6 +68,16 @@ production service and the occupied local RTX 5090 are outside this job's scope.
 Do not release the existing 4090 reservation or restore its borrowed service
 without Sean's instruction; that reservation predates this task.
 
+An external host reboot interrupted the first full attempt after layer 3. The
+upstream checkpoint was valid and was used for resume. The scoped user unit
+`l0xre-exl3-4090-reservation.service` now invokes `reservation.py` at boot. It
+archives stale guardian history, recreates the exact frozen `/tmp` preset through
+its original hash-checked helper, then delegates to the existing guardian. It
+captures the borrowed service's current profile; it does not revert a newer
+Strata installation. Linger was already enabled. Rollback: disable this new user
+unit and remove its new unit file after arranging the desired reservation state;
+the preexisting policy keeps Strata stopped until Sean explicitly releases it.
+
 Example guardian command (not a direct shell launch):
 
 ```text
