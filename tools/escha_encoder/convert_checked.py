@@ -17,11 +17,14 @@ def checked_finalize(*args, **kwargs):
 quantize.finalize_capture_H = checked_finalize
 
 from exllamav3.conversion.convert_model import parser, prepare, main
+from exllamav3.conversion import convert_model
+from durable_io import install
 
 if __name__ == '__main__':
     arguments=parser.parse_args()
     if arguments.codebook != 'mcg':
         raise ValueError('Escha V1 requires MCG')
+    install(convert_model,arguments.work_dir,arguments.out_dir)
     in_args,job_state,ok,error=prepare(arguments)
     if not ok:
         raise ValueError(error)

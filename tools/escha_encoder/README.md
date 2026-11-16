@@ -68,10 +68,16 @@ production service and the occupied local RTX 5090 are outside this job's scope.
 Do not release the existing 4090 reservation or restore its borrowed service
 without Sean's instruction; that reservation predates this task.
 
-An external host reboot interrupted the first full attempt after layer 3. The
-upstream checkpoint was valid and was used for resume. The scoped user unit
+An external host reboot interrupted the first full attempt during layer 4. The
+latest activation checkpoint and one tensor file were truncated. The previous
+checkpoint was structurally intact; recovery archives the damaged files and
+uses that older checkpoint. `durable_io.py` wraps the original serializer with
+fsync, atomic publication and checkpoint checksums, without changing tensor
+payloads or fitting algorithms. Byte-identical serialization and simulated
+truncation/fallback tests pass on local Python 3.12 and Z840 Python 3.10.
+The scoped user unit
 `l0xre-exl3-4090-reservation.service` now invokes `reservation.py` at boot. It
-archives stale guardian history, recreates the exact frozen `/tmp` preset through
+archives stale guardian history, selects an intact checkpoint, recreates the exact frozen `/tmp` preset through
 its original hash-checked helper, then delegates to the existing guardian. It
 captures the borrowed service's current profile; it does not revert a newer
 Strata installation. Linger was already enabled. Rollback: disable this new user

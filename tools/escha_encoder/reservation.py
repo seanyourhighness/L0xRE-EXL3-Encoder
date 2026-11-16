@@ -43,6 +43,9 @@ def main():
                authorization='Sean: use the 4090 on the z840 for the work',prior_attempt_history_preserved=True)
     (archive/'recovery.json').write_text(json.dumps(event,indent=2)+'\n')
     with (root/'reservation-events.jsonl').open('a') as stream:stream.write(json.dumps(event)+'\n')
+    from durable_io import recover
+    recovery=recover(root/'pipeline/full/conversion')
+    (archive/'checkpoint-recovery.json').write_text(json.dumps(recovery,indent=2)+'\n')
     # The frozen runtime's canonical helper materializes its settings in /tmp,
     # which is cleared at boot. Recreate the exact bytes, never change settings.
     runtime=json.loads((assets/'source/speed-parity-runtime-sm89-v2.json').read_text())
