@@ -101,6 +101,9 @@ def export_model(a):
             for key in f.keys():
                 require(key not in keys,'Duplicate checkpoint tensor: '+key)
                 keys[key]=file
+    # A shard commonly contains dozens of projections and all four sidecars.
+    # Hash each immutable file once, rather than rereading it four times per projection.
+    shard_hashes={file:sha(file) for file in files}
     patches={};receipts=[]
     selected=[r for r in rows if r['name']==a.projection] if a.projection else (
         [r for r in rows if r['layer']==a.layer] if a.layer is not None else rows)
@@ -117,7 +120,7 @@ def export_model(a):
         marker=int(np.asarray(packed['mcg']).reshape(-1)[0]) & 0xffffffff
         require(marker==MCG,'Wrong codebook marker')
         require(packed['trellis'].shape==(row['ic']//16,row['oc']//16,16*row['k']), 'Wrong K or geometry: '+name)
-        identity={suffix:sha(keys[key+'.'+suffix]) for suffix in packed}
+        identity={suffix:shard_hashes[keys[key+'.'+suffix]] for suffix in packed}
         directory=root/'export-checkpoints'/name;directory.mkdir(parents=True,exist_ok=True)
         record=directory/'receipt.json'
         if record.exists():
