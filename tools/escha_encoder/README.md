@@ -39,6 +39,11 @@ remain exactly **8,619,127,680 bytes**. Existing model files are never overwritt
 - `pipeline.py`: guardian-owned automation from projection through full layer,
   both native runtime smokes, full conversion/export, and the existing 116-document
   KLD comparison. A failure stops subsequent stages. `--full` enables the full run.
+- `qualify.py`: subsequent guardian job, requiring a complete full-model export.
+  Uses the frozen 20-document DFlash timing fixture in paired ABBA order, and the
+  canonical Club150 ON/OFF harness against both B02-A2 and the new candidate.
+  Records per-pack regressions, document-paired throughput confidence intervals,
+  exact loaded backend and zero-fallback checks. It performs no promotion.
 
 `gguf_patch.py` is reused unchanged from the retained local quantization tools
 (original SHA256 `6f6f156c859f0b10b0eef767767c6d8ade5f4be1db149575d1b825c189fd58fe`).
@@ -50,7 +55,7 @@ unchanged tensors. A no-op export was verified against the original full digest
 
 The isolated work root is `/mnt/ssd/ai-builds/l0xre-exl3-encoder-v1`.
 Use its `venv/bin/python`, `CUDA_HOME=<work>/cuda`, `CC=/usr/bin/gcc-13`,
-`CXX=/usr/bin/g++-13`, `NVCC_CCBIN=/usr/bin/g++-13`, `MAX_JOBS=4`,
+`CXX=/usr/bin/g++-13`, `NVCC_CCBIN=/usr/bin/g++-13`, `MAX_JOBS=8`,
 `TORCH_CUDA_ARCH_LIST=8.9`, and `TORCH_EXTENSIONS_DIR=<work>/torch-extensions`.
 The CUDA view contains symlinks to the already installed CUDA 13.3 toolkit.
 The first compiler attempt used incompatible conda GCC 15 headers; preserve its
