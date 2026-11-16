@@ -30,19 +30,29 @@ class Streaming:
             if any(id(p) not in owned for p in module.parameters(recurse=False)):
                 unique.append(module);owned.update(id(p) for p in module.parameters(recurse=False))
         self.cpu={id(p):p.detach().cpu() for p in model.parameters()}
+        self.parameters={id(m):dict(m._parameters) for m in model.modules()}
         self.buffers={id(m):{n:b.detach().cpu() for n,b in m.named_buffers(recurse=False)} for m in model.modules()}
         def enter(module,args):
             self.current_module=names.get(id(module),'unknown')
             ids=[];module._escha_saved_ids=ids
-            for param in module.parameters():
-                cpu=self.cpu[id(param)];gpu=cpu.to(self.device)
-                param.data=gpu
-                ptr=gpu.untyped_storage().data_ptr();self.registry[ptr]=(cpu,gpu.storage_offset());ids.append(ptr)
+            # Never mutate .data on a Parameter saved by checkpoint's internal
+            # hooks. Those hooks retain the Parameter itself during recompute;
+            # moving it to CPU changes saved metadata before unpack validates it.
+            # Restore module bindings instead, leaving each saved CUDA tensor intact.
+            staged={}
             for child in module.modules():
+                for name,param in self.parameters[id(child)].items():
+                    if param is None:continue
+                    if id(param) not in staged:
+                        cpu=self.cpu[id(param)]
+                        gpu=torch.nn.Parameter(cpu.to(self.device),requires_grad=param.requires_grad)
+                        staged[id(param)]=gpu
+                        ptr=gpu.untyped_storage().data_ptr();self.registry[ptr]=(cpu,gpu.storage_offset());ids.append(ptr)
+                    child._parameters[name]=staged[id(param)]
                 for name,cpu in self.buffers[id(child)].items():child._buffers[name]=cpu.to(self.device)
         def leave(module,args,result):
-            for param in module.parameters():param.data=self.cpu[id(param)]
             for child in module.modules():
+                child._parameters.update(self.parameters[id(child)])
                 for name,cpu in self.buffers[id(child)].items():child._buffers[name]=cpu
             for ptr in getattr(module,'_escha_saved_ids',[]):self.registry.pop(ptr,None)
         for module in unique:
@@ -101,7 +111,9 @@ class Streaming:
     def close(self):
         for module,forward in self.original_forwards:module.forward=forward
         for handle in self.handles:handle.remove()
-        for param in self.model.parameters():param.data=self.cpu[id(param)]
+        for module in self.model.modules():
+            module._parameters.update(self.parameters[id(module)])
+            module._buffers.update(self.buffers[id(module)])
         self.registry.clear()
         self.saved_cache.clear()
 

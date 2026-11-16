@@ -75,6 +75,33 @@ class AllocationTests(unittest.TestCase):
 
 
 class GradientTests(unittest.TestCase):
+    def test_staging_preserves_saved_parameter_identity_and_restores_bindings(self):
+        import torch
+        from hf_stream import Streaming
+        class Tiny(torch.nn.Module):
+            def __init__(self):
+                super().__init__();self.layers=torch.nn.ModuleList([torch.nn.Linear(8,8)])
+                self.identity=torch.nn.Identity();self.seen=[]
+            def get_input_embeddings(self):return self.identity
+            def get_output_embeddings(self):return self.identity
+            def forward(self,x):return self.layers[0](x)
+        model=Tiny().eval()
+        for p in model.parameters():p.requires_grad_(False)
+        original=model.layers[0].weight
+        hook=model.layers[0].register_forward_pre_hook(lambda m,a:model.seen.append(m.weight))
+        stream=Streaming(model,'cpu',activation_checkpoint=True)
+        # Record after staging, as checkpoint's saved-tensor hooks do.
+        hook.remove()
+        hook=model.layers[0].register_forward_pre_hook(lambda m,a:model.seen.append(m.weight))
+        try:
+            x=torch.randn(2,8,requires_grad=True)
+            with stream.saved_tensors():model(x).sum().backward()
+            self.assertIsNot(model.seen[0],original)
+            self.assertIs(model.layers[0].weight,original)
+            self.assertTrue(torch.isfinite(x.grad).all())
+        finally:hook.remove();stream.close()
+        self.assertIs(model.layers[0].weight,original)
+
     def test_saved_activation_cache_preserves_views_and_versions(self):
         import torch
         from hf_stream import Streaming
