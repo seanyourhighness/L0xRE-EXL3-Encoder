@@ -199,6 +199,12 @@ def run(a):
     s.run('teacher-forward',[python,here/'check_teacher.py','--assets',assets,'--model',source,'--out',root/'teacher-forward.json'],[root/'teacher-forward.json'])
     s.run('gradient-parity',[python,here/'gpu_parity.py','--out',root/'gradient-parity.json'],[root/'gradient-parity.json'])
     s.run('new-width-runtime',[python,here/'role_probe.py','--plan',root/'plan.json'],[root/'role-probe/complete.json'])
+    fixture=root/'role-probe/dispatch-only.gguf'
+    if fixture.exists():
+        require(sha(fixture)==read(root/'role-probe/complete.json')['fixture_sha256'],'Native format fixture changed')
+        atomic_json(root/'role-probe/reclaimed-fixture.json',dict(sha256=sha(fixture),bytes=fixture.stat().st_size,
+            reason='Silenced format-only fixture, not learned weights; retain generator patches/native rows/logs/receipt and reclaim redundant model copy'))
+        fixture.unlink()
     # A real early-layer full-backward pilot tests HF/GDN offload and resource use.
     from safetensors.numpy import load_file
     import numpy as np
