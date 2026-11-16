@@ -159,6 +159,20 @@ class GradientTests(unittest.TestCase):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_sensitivity_partitions_exclude_critical_prefixes_without_responses(self):
+        from sensitivity_data import prepare
+        from safetensors.numpy import save_file
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);records=[dict(original_doc=i,category=category,prompt_sha256=str(i))
+                for i,category in enumerate([c for c in ('code','tools','reasoning','web','math','agentic') for _ in range(24)])]
+            trace=root/'trace.safetensors';save_file(dict(input_ids=np.ones((144,64),np.int64),lengths=np.full(144,64,np.int64)),str(trace))
+            Path(str(trace)+'.receipt.json').write_text(json.dumps(dict(selection=records)))
+            metadata=root/'metadata.json';metadata.write_text(json.dumps(dict(docs=[dict(tokens=64,score_from=0,row0=i*63) for i in range(144)])))
+            mask=np.ones(144*63,np.uint8);mask[48*63:49*63]=0;file=root/'gen.u8';mask.tofile(file)
+            result=prepare(trace,root/'out',24,16,4,reference=metadata,gen_mask=file,length=64)
+            self.assertIn(48,result['excluded_empty_or_tiny_critical_responses'])
+            for value in result['replicates'].values():self.assertNotIn(48,value['measurement_ids'])
+
     def test_compiled_weights_preserved_when_redundant_module_scratch_reclaimed(self):
         from candidates import compiled_checkpoint
         from safetensors.numpy import save_file

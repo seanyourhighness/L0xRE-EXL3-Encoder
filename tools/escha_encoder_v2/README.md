@@ -14,6 +14,8 @@ collector, LDLQ, Viterbi encoder, codebook or inference kernel is rewritten.
   four noise amplitudes2.5/1.96/1/.5, two draws, and two disjoint24-document
   replicates with64shared shaping documents. Each replicate contains all15
   categories, including four code, four tools and four reasoning documents.
+  Critical-domain documents must include at least16scored assistant tokens in
+  the actual measured prefix; prompt-only prefixes do not count as response coverage.
   `measure.py` reuses the original parser, noise/capture/forward/measurement code
   but selects individual body targets. Upstream groups dense gate/up, qkv and
   qkv/z for its own equal-width fused kernels and includes the head; those are

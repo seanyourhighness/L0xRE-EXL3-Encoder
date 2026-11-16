@@ -41,6 +41,7 @@ def prepare(a):
               data_source=str((root.parent/'trace-source').resolve()),
               data_source_pins_sha256=sha(root.parent/'trace-source/pins.json'),
               holdout_source_pins_sha256=sha(root.parent/'trace-source/holdout-pins.json'),
+              measurement_gen_mask_sha256=sha(root.parent/'trace-source/calib/gen.u8'),
               factor_stores=[str(root/'factor-chunks'),str(Path.home()/('work/l0xre-exl3-v2-factors-'+root.name))],
               implementation={str(p.relative_to(TREE)):sha(p) for folder in (Path(__file__).parent,TREE/'tools/escha_encoder') for p in folder.glob('*.py')},
               upstream_tools={n:sha(TREE/n) for n in ('sc_trace.py','sc_measure.py','sc_optimize.py','sc_rfn_probe.py','util/yaqa_hessians.py',
@@ -181,6 +182,7 @@ def run(a):
     data=Path(plan['data_source']);pins=read(data/'pins.json')
     require(sha(data/'pins.json')==plan['data_source_pins_sha256'],'Calibration provenance changed')
     for name,h in pins['files'].items():require(sha(data/name)==h,'Calibration source changed: '+name)
+    require(sha(data/'calib/gen.u8')==plan['measurement_gen_mask_sha256'],'Calibration assistant mask changed')
     require(sha(data/'holdout-pins.json')==plan['holdout_source_pins_sha256'],'Holdout source provenance changed')
     for name,h in read(data/'holdout-pins.json')['files'].items():require(sha(data/name)==h,'Holdout token metadata changed: '+name)
     if plan['trace_model']:
@@ -194,7 +196,8 @@ def run(a):
               '--public-corpus',data/'public.jsonl','--task-manifest',assets/'TASK-MANIFEST.json','--out',trace,
               '--rows',str(plan['calibration_rows']),'--cols',str(plan['calibration_cols'])], [trace,Path(str(trace)+'.receipt.json')])
     s.run('sensitivity-partitions',[python,here/'sensitivity_data.py','--trace',trace,'--out',root/'measurement-traces',
-          '--rows',str(plan['measurement_rows']),'--h-rows',str(plan['hessian_rows']),'--critical-min',str(plan['measurement_critical_min'])],
+          '--rows',str(plan['measurement_rows']),'--h-rows',str(plan['hessian_rows']),'--critical-min',str(plan['measurement_critical_min']),
+          '--reference',data/'calib/kld.json','--gen-mask',data/'calib/gen.u8','--length',str(plan['measurement_cols'])],
           [root/'measurement-traces/selection.json',root/'measurement-traces/A.safetensors',root/'measurement-traces/B.safetensors'])
     s.run('teacher-forward',[python,here/'check_teacher.py','--assets',assets,'--model',source,'--out',root/'teacher-forward.json'],[root/'teacher-forward.json'])
     s.run('gradient-parity',[python,here/'gpu_parity.py','--out',root/'gradient-parity.json'],[root/'gradient-parity.json'])
