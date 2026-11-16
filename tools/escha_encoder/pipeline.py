@@ -30,6 +30,7 @@ def call(module,argv):
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--assets',required=True);p.add_argument('--work',required=True)
+    p.add_argument('--hessians',help='Optional isolated cache of the retained calibration Hessians')
     p.add_argument('--cpu-proof',required=True);p.add_argument('--full',action='store_true')
     a=p.parse_args();assets=Path(a.assets);root=Path(a.work);root.mkdir(parents=True,exist_ok=True)
     lease=assets/'leases/4090/state.json';state=json.loads(lease.read_text())
@@ -54,7 +55,8 @@ def main():
     def save():atomic_json(gatefile,gates)
     save()
     import pilot,export_pilot,workflow
-    common=['--template',template,'--inputs',assets/'data/body-block0','--hessians',assets/'data/body-hessians',
+    common=['--template',template,'--inputs',assets/'data/body-block0','--hessians',
+            Path(a.hessians) if a.hessians else assets/'data/body-hessians',
             '--native-codec',assets/'tools/native_codec_dual.so','--lease-state',lease,'--output',root/'pilot']
     def qualify(label,model,reference):
         output=root/(label+'.json');log=root/(label+'.log')
