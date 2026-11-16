@@ -43,6 +43,20 @@ class ExportTests(unittest.TestCase):
 
 
 class AllocationTests(unittest.TestCase):
+    def test_exact_replicated_allocation_and_unchanged_control(self):
+        from allocate import robust
+        rows=[dict(name=f'blk.{i}.x',source_key=f'model.language_model.layers.{i}.mlp.gate_proj',ic=128,oc=128,k=k,allowed_k=[2,3])
+              for i,k in enumerate((3,2,2))]
+        policy=dict(projections=rows,body_bits=16384*7)
+        measurement=dict(model='synthetic',results=[dict(key=r['source_key'],qbits_key='bits',numel=16384,shaped=True,
+            levels=[dict(kld=g*x*x,rfn_actual=x) for x in (.4,.2,.1)]) for r,g in zip(rows,(100,2,1))])
+        anchors=dict(results=[dict(key=r['source_key'],K=r['k'],numel=16384,rfn=.1 if r['k']==3 else .2) for r in rows])
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe,audit=robust(policy,[measurement,copy.deepcopy(measurement)],anchors,tmp)
+            self.assertEqual([recipe['tensors'][r['source_key']] for r in rows],[3,2,2])
+            self.assertEqual(audit['body_bits'],policy['body_bits'])
+            saved=json.loads((Path(tmp)/'allocation-audit.json').read_text())
+            self.assertFalse(saved['allocation_changed']);self.assertTrue(saved['unchanged_control_permitted'])
     def test_measurement_targets_are_individual_and_head_is_excluded(self):
         from measure import individual_targets
         from types import SimpleNamespace
@@ -145,6 +159,25 @@ class GradientTests(unittest.TestCase):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_sensitivity_replicates_balance_critical_domains_without_overlap(self):
+        from sensitivity_data import select
+        records=[dict(category=category,prompt_sha256=str(i)+category) for category in ('code','tools','reasoning','web','math','agentic') for i in range(12)]
+        a=select(records,24,4,set(),1);b=select(records,24,4,set(a),2)
+        self.assertFalse(set(a)&set(b))
+        for subset in (a,b):
+            for category in ('code','tools','reasoning'):self.assertGreaterEqual(sum(records[i]['category']==category for i in subset),4)
+
+    def test_native_gate_requires_production_improvement_domains_and_tails(self):
+        from candidates import native_gate
+        report=dict(candidate_mean=.08,baseline_mean=.098,paired_document95=[.1,.2],
+             domains={k:dict(candidate_mean=.07,baseline_mean=.08,within_margin_before_AA_jitter=True) for k in ('code','tools','reasoning')},
+             tails={k:dict(within_margin_before_AA_jitter=True) for k in ('p99','p99_9')})
+        self.assertTrue(native_gate(report)['passed'])
+        report['candidate_mean']=.10;self.assertFalse(native_gate(report)['passed'])
+        report['candidate_mean']=.08;report['tails']['p99']['within_margin_before_AA_jitter']=False
+        self.assertFalse(native_gate(report)['passed'])
+        report['tails']['p99']['within_margin_before_AA_jitter']=True;report['candidate_mean']=float('nan')
+        self.assertFalse(native_gate(report)['passed'])
     def test_stage_resumes_valid_outputs_and_recovers_corruption(self):
         import sys
         from run import Stages

@@ -11,7 +11,7 @@ import re
 import subprocess
 import numpy as np
 from gguf import GGUFReader
-from common import read,require,atomic_json,sha
+from common import read,require,atomic_json,sha,native_runtime
 from structural_export import export
 
 
@@ -35,7 +35,7 @@ def main():
     audit=importlib.util.module_from_spec(spec);spec.loader.exec_module(audit);result=audit.audit(model,plan['bridge_source'])
     require(result['passed'] and all(result['role_counts'][str(i)]>0 for i in range(12)),'Not all runtime roles covered')
     require(set(result['FFN_pair_counts'])=={'(2, 2)','(2, 3)','(3, 2)','(3, 3)'},'Missing FFN width pairing')
-    runtime=read(assets/'source/speed-parity-runtime-sm89-v2.json');out=root/'native.json';log=root/'native.log'
+    runtime=native_runtime(plan);out=root/'native.json';log=root/'native.log'
     with log.open('wb') as stream:
         subprocess.run([str(assets/'tools/native_kld'),'--model',str(model),'--ref',str(assets/'data/smoke8'),
             '--out',str(out),'--ctx','8192','--batch','64','--ubatch','64','--threads','6'],

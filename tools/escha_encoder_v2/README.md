@@ -11,14 +11,17 @@ collector, LDLQ, Viterbi encoder, codebook or inference kernel is rewritten.
 
 - Use original-MCG RFN anchors from V1 through `sc_rfn_probe.py`.
 - Measure end-to-end sensitivity using `sc_measure.py --streaming --shaped`,
-  two noise levels, 16 measurement documents and 64 separate Hessian rows.
+  four noise amplitudes2.5/1.96/1/.5, two draws, and two disjoint24-document
+  replicates with64shared shaping documents. Each replicate contains all15
+  categories, including four code, four tools and four reasoning documents.
   `measure.py` reuses the original parser, noise/capture/forward/measurement code
   but selects individual body targets. Upstream groups dense gate/up, qkv and
   qkv/z for its own equal-width fused kernels and includes the head; those are
   inappropriate measurement units for Escha's independent widths/frozen head.
 - Run the original `sc_optimize.py` on feasible projections only, K2–K3,
   integer steps, with the exact body-bit budget remaining after fixed tensors.
-  Its per-bit error ratio1.96 remains a model assumption, not a measured MCG
+  Audit/replace its discrete choices with the reviewed exact dynamic program
+  over the same additive cost table. Its per-bit error ratio1.96 remains a model assumption, not a measured MCG
   rate curve. Sensitivity/predicted KL is not full-model measured KL.
 - 336 projections may change K. The 64 qkv/q projections without a corresponding
   K3 fast path stay K2. The existing runtime supports all four FFN gate/up
@@ -126,3 +129,45 @@ unsupported width; exact CPU forward/gradient equality including nonzero storage
 offsets; V1 completion gate; Unicode JSONL and public-prompt exclusion. The real
 template's2058-tensor offset/size layout matches the writer's computed layout.
 The GPU gates and full V2 quality are **not yet qualified**.
+
+## Reviewed quality run (SOL-HANDOFF.md / REVIEW.md, November16)
+
+The original failed run and recovery receipts remain immutable. The reviewed run
+uses a fresh `quality-run-20261116` plan with configurable stage arguments bound
+to its source/data hashes. The prior temporary-Parameter binding fix was actually
+GPU-qualified: original2048token backward, twelve full-Hout factors, nativeMCGK3
+fit and zero-delta gradient tests. New longer-prefix teacher gates still rerun.
+
+Before expensive measurements, actual stored-half K2/K3 YaQA fits of SSMout,
+FFNgate and FFNup diagnose the rate curve and verify native decoder equality.
+The measurement envelope must cover their observed RFNs relative to V1anchors.
+This is a representative diagnostic, not proof every tensor follows one ratio.
+
+Independent SC rankings must reach Spearman.75 and weighted width disagreement
+<=.25. The mean-table exact recipe must not regress either replicate. These
+predeclared screening thresholds are hypotheses; a failure stops for review.
+An unchanged optimum is permitted and labeled. The fixed-map YaQA control is
+always retained; changed maps also get allocation-only and combined candidates.
+No forced swaps or claim that exact predicted allocation proves model quality.
+
+Each candidate gets native paired development116 KLD vs B02-A2 **and V1**.
+Selection requires a positive paired95CI, no code/tools/reasoning mean regression,
+and the existing per-domain and p99/p99.9 margins. Only an eligible development
+winner gets canonical Club150 OFF/ON and paired DFlash tests. Those must pass
+before opening the final reserved data. No winner means retain B02-A2.
+
+The published pool no longer has unused reasoning examples after known prior
+exposures. Reserve32known-disjoint published documents (including code/tools),
+plus16new deterministic arithmetic reasoning fixtures, before any V2 selection.
+Their probability labels come only from the original BF16 teacher **after** a
+winner is fixed; neither prompts nor outputs are used in training, factors,
+sensitivity or model selection. Full native B02-A2/winner evaluation covers this
+48-document final reference once. The constructed reasoning scope is limited,
+and completeness of all historical public exposure is not provable; both
+limitations are recorded. No automatic promotion.
+
+Final GGUFs, native rows, source hashes, recipes, factors and failure logs are
+preserved. After each candidate has a verified final model and native output,
+only that new candidate's reproducible conversion/export scratch is reclaimed,
+with a cleanup receipt, to fit all three ablations within current disk capacity.
+This never removes V1, B02-A2, calibration sources, factors or final weights.

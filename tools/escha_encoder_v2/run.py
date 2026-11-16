@@ -23,13 +23,19 @@ def prepare(a):
               extension_sha256=sha(Path(a.v1).resolve().parent/'torch-extensions/exllamav3_ext/exllamav3_ext.so'),
               template=policy['template'],template_sha256='b0849250c633aa93853bf119a877dbdafdd7b1a4ebb672bd6b6a1439906f3543',
               bridge_source=str(Path(a.bridge_source).resolve()),policy=policy,
-              calibration_rows=250,calibration_cols=2048,measurement_rows=16,measurement_cols=1024,
+              calibration_rows=250,calibration_cols=2048,measurement_rows=24,measurement_cols=1024,
+              measurement_critical_min=4,measurement_draws=2,measurement_replicates=['A','B'],measurement_memory_gb=24,rfn_scales=[2.5,1.96,1.0,.5],
+              quality_review='SOL-HANDOFF/REVIEW2026-11-16: bracket demotions, independent stratified replicates, exact discrete audit, fixed-map control, broad teacher parity, native holdout',
               hessian_rows=64,yaqa_rows=250,yaqa_cols=2048,yaqa_chunk=2,yaqa_sides='out',yaqa_samples=1,
               cpu_memory_max='96G',seed=20261116,pack_workers=3,
               trace_model=a.trace_model,
+              validation_pins=dict(runtime_manifest=sha(Path(a.assets)/'source/speed-parity-runtime-sm89-v2.json'),
+                  native_scorer=sha(Path(a.assets)/'tools/native_kld'),
+                  baseline_rows=sha(Path(a.assets)/'evidence/stacking-loop/B02/A2/full116.json.rows')),
               data_source=str((root.parent/'trace-source').resolve()),
               data_source_pins_sha256=sha(root.parent/'trace-source/pins.json'),
-              factor_stores=[str(root/'factor-chunks'),str(Path.home()/'work/l0xre-exl3-v2-factors')],
+              holdout_source_pins_sha256=sha(root.parent/'trace-source/holdout-pins.json'),
+              factor_stores=[str(root/'factor-chunks'),str(Path.home()/('work/l0xre-exl3-v2-factors-'+root.name))],
               implementation={str(p.relative_to(TREE)):sha(p) for folder in (Path(__file__).parent,TREE/'tools/escha_encoder') for p in folder.glob('*.py')},
               upstream_tools={n:sha(TREE/n) for n in ('sc_trace.py','sc_measure.py','sc_optimize.py','sc_rfn_probe.py','util/yaqa_hessians.py',
                   'exllamav3/modules/quant/exl3_lib/quantize.py','exllamav3/exllamav3_ext/quant/codebook.cuh',
@@ -135,7 +141,9 @@ def run(a):
     # room for live OS files and GPU-conversion/export scratch without deleting V1.
     demands={};paths={};seen=set();occupied=0
     for pattern in ('conversion/qtensors/*.safetensors','converted/*.safetensors','export-checkpoints/*/*.npy',
-                    'conversion/ckpt*/*.safetensors','*.gguf','role-probe/*.gguf'):
+                    'conversion/ckpt*/*.safetensors','*.gguf','role-probe/*.gguf','candidates/*/*.gguf',
+                    'candidates/*/conversion/qtensors/*.safetensors','candidates/*/converted/*.safetensors',
+                    'candidates/*/export-checkpoints/*/*.npy','candidates/*/conversion/ckpt*/*.safetensors'):
         for f in root.glob(pattern):
             st=f.stat();key=(st.st_dev,st.st_ino)
             if key not in seen:occupied+=st.st_size;seen.add(key)
@@ -147,7 +155,7 @@ def run(a):
         else:
             require(not any(store.iterdir()),'Refuse an unowned nonempty factor store')
             atomic_json(owner,dict(work=str(root)))
-        expected=sum((r['oc']*(r['oc']+1)//2+r['oc'])*4 for r in policy['projections'] if (r['layer']//2)%len(plan['factor_stores'])==index)
+        expected=sum((r['oc']*(r['oc']+1)//2+r['oc'])*4 for r in policy['projections'] if (r['layer']//plan['yaqa_chunk'])%len(plan['factor_stores'])==index)
         present=sum(f.stat().st_size for f in store.glob('*/*.safetensors'))
         demands[device]=demands.get(device,20*1024**3)+max(expected-present,0)
     for device,needed in demands.items():require(shutil.disk_usage(paths[device]).free>needed,'Insufficient factor/workspace capacity: '+str(paths[device]))
@@ -155,10 +163,16 @@ def run(a):
     subprocess.run(['systemctl','--user','set-property','--runtime','l0xre-exl3-4090-reservation.service','MemoryMax=96G'],check=True)
     s=Stages(root);python=sys.executable;here=Path(__file__).parent;assets=Path(plan['assets']);v1=Path(plan['v1']);source=Path(plan['source'])
     atomic_json(root/'v1-prerequisite.json',dict(passed=True,v1_gate_sha256=sha(v1/'compatibility-gates.json')))
+    from holdout import freeze
+    freeze(plan)
+    from blind_reasoning import freeze as freeze_reasoning
+    freeze_reasoning(plan)
     trace=root/'calibration.safetensors'
     data=Path(plan['data_source']);pins=read(data/'pins.json')
     require(sha(data/'pins.json')==plan['data_source_pins_sha256'],'Calibration provenance changed')
     for name,h in pins['files'].items():require(sha(data/name)==h,'Calibration source changed: '+name)
+    require(sha(data/'holdout-pins.json')==plan['holdout_source_pins_sha256'],'Holdout source provenance changed')
+    for name,h in read(data/'holdout-pins.json')['files'].items():require(sha(data/name)==h,'Holdout token metadata changed: '+name)
     if plan['trace_model']:
         teacher=Path(plan['trace_model']);cfg=read(teacher/'quantization_config.json')
         require(cfg['quant_method']=='exl3' and cfg['bits']>=6,'Fresh self-trace needs a verified high-precision EXL3 teacher, not V1')
@@ -167,7 +181,11 @@ def run(a):
               '--seed',str(plan['seed'])],[trace,root/'trace.json'])
     else:
         s.run('trace',[python,here/'trace_data.py','--reference',data/'calib','--corpus',data/'calib.jsonl',
-              '--public-corpus',data/'public.jsonl','--task-manifest',assets/'TASK-MANIFEST.json','--out',trace], [trace,Path(str(trace)+'.receipt.json')])
+              '--public-corpus',data/'public.jsonl','--task-manifest',assets/'TASK-MANIFEST.json','--out',trace,
+              '--rows',str(plan['calibration_rows']),'--cols',str(plan['calibration_cols'])], [trace,Path(str(trace)+'.receipt.json')])
+    s.run('sensitivity-partitions',[python,here/'sensitivity_data.py','--trace',trace,'--out',root/'measurement-traces',
+          '--rows',str(plan['measurement_rows']),'--h-rows',str(plan['hessian_rows']),'--critical-min',str(plan['measurement_critical_min'])],
+          [root/'measurement-traces/selection.json',root/'measurement-traces/A.safetensors',root/'measurement-traces/B.safetensors'])
     s.run('teacher-forward',[python,here/'check_teacher.py','--assets',assets,'--model',source,'--out',root/'teacher-forward.json'],[root/'teacher-forward.json'])
     s.run('gradient-parity',[python,here/'gpu_parity.py','--out',root/'gradient-parity.json'],[root/'gradient-parity.json'])
     s.run('new-width-runtime',[python,here/'role_probe.py','--plan',root/'plan.json'],[root/'role-probe/complete.json'])
@@ -176,18 +194,33 @@ def run(a):
     import numpy as np
     pilot_offset=int(np.argmax(load_file(str(trace))['lengths']))
     s.run('yaqa-pilot',[python,here/'yaqa.py','--model-dir',source,'--calibration',trace,'--out',root/'yaqa-pilot',
-          '--layer','0','--layer-end','2','--rows','1','--skip-rows',str(pilot_offset),'--cols','2048'],[root/'yaqa-pilot/collector.json'])
+          '--layer','0','--layer-end','2','--rows','1','--skip-rows',str(pilot_offset),'--cols',str(plan['yaqa_cols'])],[root/'yaqa-pilot/collector.json'])
     s.run('two-sided-pilot',[python,here/'fit_pilot.py','--plan',root/'plan.json'],[root/'two-sided-pilot.json'])
+    s.run('actual-k2-k3-rates',[python,here/'rate_probes.py','--plan',root/'plan.json'],[root/'rate-probes.json'])
+    require(read(root/'rate-probes.json')['recommended_max_noise_scale']<=max(plan['rfn_scales']),
+            'Actual K2/K3 rate ratio falls outside the frozen noise range; inspect and extend a new measurement plan')
     s.run('rfn',[python,TREE/'sc_rfn_probe.py','-mq',v1/'full/converted','-mr',source,'-d','0','-o',root/'rfn.json'],[root/'rfn.json'])
-    s.run('shaped-sensitivity',[python,here/'measure.py','--contract',root/'contract.json','-m',source,'--streaming','--max-sys','24','-tr',trace,
-          '-r','16','-l','1024','--shaped','--h_rows','64','--rfn_ref',root/'rfn.json','--rfn_scale','1.0,0.5','-o',root/'sensitivity.json'],[root/'sensitivity.json'],timeout=72*3600)
-    s.run('allocation',[python,here/'allocate.py','--contract',root/'contract.json','--measurement',root/'sensitivity.json',
+    anchor={r['key']:r['rfn'] for r in read(root/'rfn.json')['results']}
+    measured=read(root/'rate-probes.json')['results'];coverage={}
+    for value in measured:
+        key=value['identity']['key'];coverage[key]=max(coverage.get(key,0),value['rfn']/anchor[key])
+    atomic_json(root/'rate-coverage.json',dict(actual_YaQA_over_V1_anchor=coverage,measured_noise_max=max(plan['rfn_scales']),
+        scope='Representative roles only; all other tensors retain a modeled rate curve'))
+    require(all(v<=max(plan['rfn_scales']) for v in coverage.values()),'Actual rate probes exceed the measured V1-anchor noise envelope')
+    for replicate in plan['measurement_replicates']:
+        s.run('shaped-sensitivity-'+replicate,[python,here/'measure.py','--contract',root/'contract.json','-m',source,'--streaming','--max-sys',str(plan['measurement_memory_gb']),
+          '-tr',root/f'measurement-traces/{replicate}.safetensors','-r',str(plan['measurement_rows']),'-l',str(plan['measurement_cols']),
+          '--shaped','--h_rows',str(plan['hessian_rows']),'--draws',str(plan['measurement_draws']),
+          '--rfn_ref',root/'rfn.json','--rfn_scale',','.join(map(str,plan['rfn_scales'])),'-o',root/f'sensitivity-{replicate}.json'],
+          [root/f'sensitivity-{replicate}.json'],timeout=72*3600)
+    s.run('allocation',[python,here/'allocate.py','--contract',root/'contract.json','--measurement',root/'sensitivity-A.json','--replicate',root/'sensitivity-B.json',
           '--rfn',root/'rfn.json','--out',root/'allocation'],[root/'allocation/recipe.yaml',root/'allocation/allocation-audit.json'])
     factors=root/'hessians';factors.mkdir(exist_ok=True)
-    for start in range(0,64,2):
-        end=start+2;store=Path(plan['factor_stores'][(start//2)%len(plan['factor_stores'])]);out=store/f'{start:02d}-{end:02d}'
+    for start in range(0,64,plan['yaqa_chunk']):
+        end=min(start+plan['yaqa_chunk'],64);store=Path(plan['factor_stores'][(start//plan['yaqa_chunk'])%len(plan['factor_stores'])]);out=store/f'{start:02d}-{end:02d}'
         s.run(f'yaqa-{start:02d}-{end:02d}',[python,here/'yaqa.py','--model-dir',source,'--calibration',trace,'--out',out,
-              '--layer',str(start),'--layer-end',str(end),'--rows','250','--cols','2048'],[out/'collector.json'],timeout=48*3600)
+              '--layer',str(start),'--layer-end',str(end),'--rows',str(plan['yaqa_rows']),'--cols',str(plan['yaqa_cols']),
+              '--sides',plan['yaqa_sides'],'--samples',str(plan['yaqa_samples'])],[out/'collector.json'],timeout=48*3600)
         receipt=read(out/'collector.json')
         expected={r['source_key']+'.safetensors' for r in policy['projections'] if start<=r['layer']<end}
         require(set(receipt['files'])==expected,'YaQA range failed to cover every projection')
@@ -197,22 +230,8 @@ def run(a):
             elif (factors/name).is_symlink():require((factors/name).resolve()==(out/name).resolve(),'Conflicting factor link')
             else:(factors/name).symlink_to(out/name)
     require(len(list(factors.glob('*.safetensors')))==400,'Missing two-sided factors')
-    atomic_json(root/'fit-context.json',dict(recipe_sha256=sha(root/'allocation/recipe.yaml'),calibration_sha256=sha(trace),
-        factors={f.name:sha(f) for f in sorted(factors.glob('*.safetensors'))},source_revision=plan['source_revision'],codebook='mcg'))
-    from durable_io import recover
-    recover(root/'conversion')
-    args=[python,TREE/'tools/escha_encoder/convert_checked.py','-i',source,'-w',root/'conversion','-o',root/'converted',
-          '-rcp',root/'allocation/recipe.yaml','-cb','mcg','-hb','16','-eb','16','-vb','16','-mb','16','-cd',trace,
-          '-cr','250','-cc','2048','--hessians',factors,'--out_scales','yaqa','--scaled_hessian','-d','0','-cpi','120']
-    # Resume changes the command, so retain the same base stage identity and let
-    # the checked entry point add --resume when its checkpoint exists.
-    s.run('two-sided-fit',[python,here/'resume_convert.py','--v2-context',root/'fit-context.json',*args[2:]],[root/'converted/quantization_config.json'],timeout=48*3600)
-    s.run('escha-export',[python,here/'pack.py','--contract',root/'contract.json','--recipe',root/'allocation/recipe.yaml',
-          '--checkpoint',root/'converted','--work',root/'export-checkpoints','--output',root/'quant.gguf',
-          '--template-sha256',plan['template_sha256'],'--workers','3'],[root/'quant.gguf',root/'quant.gguf.receipt.json'],timeout=24*3600)
-    s.run('qualification',[python,here/'qualify.py','--plan',root/'plan.json'],[root/'qualification.complete.json'],timeout=24*3600)
-    atomic_json(root/'complete.json',dict(pipeline_complete=True,qualified=read(root/'qualification.complete.json'),
-                plan_sha256=sha(root/'plan.json'),candidate_sha256=sha(root/'quant.gguf'),promoted=False))
+    s.run('native-ablation-and-selection',[python,here/'candidates.py','--plan',root/'plan.json'],[root/'selection.complete.json'],timeout=7*24*3600)
+    atomic_json(root/'complete.json',dict(pipeline_complete=True,qualified=read(root/'selection.complete.json'),plan_sha256=sha(root/'plan.json'),promoted=False))
 
 
 if __name__=='__main__':

@@ -7,16 +7,17 @@ import re
 import subprocess
 import sys
 import numpy as np
-from common import TREE,read,require,sha,atomic_json
+from common import TREE,read,require,sha,atomic_json,native_runtime
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--plan',required=True);a=p.parse_args();plan=read(a.plan)
+    p=argparse.ArgumentParser();p.add_argument('--plan',required=True);p.add_argument('--native-only',action='store_true');a=p.parse_args();plan=read(a.plan)
     root=Path(plan['work']);assets=Path(plan['assets']);v1=Path(plan['v1']);model=root/'quant.gguf'
     require(sha(model)==read(str(model)+'.receipt.json')['sha256'],'Exported candidate changed')
     from safetensors import safe_open
     require(read(root/'role-probe/complete.json')['passed'],'New-width runtime admission missing')
-    rtfile=assets/'source/speed-parity-runtime-sm89-v2.json';runtime=read(rtfile)
+    rtfile=assets/'source/speed-parity-runtime-sm89-v2.json';runtime=native_runtime(plan)
+    require(sha(assets/'evidence/stacking-loop/B02/A2/full116.json.rows')==plan['validation_pins']['baseline_rows'],'Production baseline rows changed')
     require(sha(runtime['environment']['LD_PRELOAD'])==runtime['bridge_sha256'],'Runtime bridge changed')
     require(sha(runtime['environment']['GGML_BACKEND_PATH'])==runtime['CUDA_backend_sha256'],'Runtime backend changed')
     ref=assets/'data/development-expanded-v1';report=root/'development116.json'
@@ -34,6 +35,8 @@ def main():
             subprocess.run([sys.executable,str(assets/'tools/paired_quality_subset.py'),'--baseline',str(baseline),
                 '--candidate',str(report),'--ref',str(ref),'--candidate-sha256',sha(model),'--out',str(out)],check=True)
         comparisons[label]=dict(path=str(out),sha256=sha(out))
+    atomic_json(root/'native.complete.json',dict(complete=True,candidate_sha256=sha(model),masked_KLD=mean,comparisons=comparisons))
+    if a.native_only:return
     # Reuse the exact V1 qualification implementation/fixtures, with a separate
     # candidate/cache namespace. Hard links add no second model-sized copy.
     alias=root/'full-escha.gguf'

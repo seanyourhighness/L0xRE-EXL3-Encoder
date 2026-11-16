@@ -11,6 +11,17 @@ from adapter import MCG,MODEL_BYTES,UPSTREAM_COMMIT,atomic_json,sha,require,inve
 def read(path):return json.loads(Path(path).read_text())
 
 
+def native_runtime(plan):
+    assets=Path(plan['assets']);path=assets/'source/speed-parity-runtime-sm89-v2.json'
+    pins=plan['validation_pins'];require(sha(path)==pins['runtime_manifest'],'Frozen runtime manifest changed')
+    runtime=read(path)
+    for path,expected in [(runtime['environment']['LD_PRELOAD'],runtime['bridge_sha256']),
+            (runtime['environment']['GGML_BACKEND_PATH'],runtime['CUDA_backend_sha256']),
+            (runtime['sealed_settings']['path'],runtime['sealed_settings']['sha256']),
+            (assets/'tools/native_kld',pins['native_scorer'])]:require(sha(path)==expected,'Native validation component changed: '+str(path))
+    return runtime
+
+
 def roles(source):
     import re
     from collections import Counter

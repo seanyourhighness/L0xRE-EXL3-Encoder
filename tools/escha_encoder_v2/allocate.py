@@ -10,7 +10,7 @@ import yaml
 from common import TREE,atomic_json,read,require,sha,validate_recipe
 
 
-def optimize(policy,measurement,rfn,output):
+def optimize(policy,measurement,rfn,output,allow_unchanged=False):
     rows={r['source_key']:r for r in policy['projections']}
     require(len(measurement['results'])>=len(rows),'Incomplete sensitivity measurement')
     selected={}
@@ -50,7 +50,7 @@ def optimize(policy,measurement,rfn,output):
     recipe=dict(target_bpw=policy['body_bits']/sum(r['ic']*r['oc'] for r in rows.values()),head_bits=16,
                 tensors={'*':16,**fixed,**raw['tensors']})
     audit=validate_recipe(policy,recipe)
-    require(bool(audit['changed_projections']),'Measured optimizer retained V1 allocation; do not label it a redistributed candidate')
+    if not allow_unchanged:require(bool(audit['changed_projections']),'Measured optimizer retained V1 allocation; do not label it a redistributed candidate')
     recipe['achieved_bpw']=audit['body_bits']/sum(r['ic']*r['oc'] for r in rows.values())
     atomic_json(out/'recipe.yaml',recipe)
     table=read(out/'predicted-kl.json')['tensors']
@@ -59,13 +59,62 @@ def optimize(policy,measurement,rfn,output):
                  mcg_anchor_provenance='V1 MCG RFN probe; per-bit amplitude ratio remains upstream assumption1.96',
                  predicted_flexible_baseline=sum(model[k][str(rows[k]['k'])] for k in model),
                  predicted_flexible_candidate=sum(model[k][str(recipe['tensors'][k])] for k in model))
-    require(audit['predicted_flexible_candidate']<audit['predicted_flexible_baseline'],
-            'SC estimate does not improve the existing map; preserve evidence instead of forcing a worse allocation')
+    if not allow_unchanged:
+        require(audit['predicted_flexible_candidate']<audit['predicted_flexible_baseline'],
+                'SC estimate does not improve the existing map; preserve evidence instead of forcing a worse allocation')
+    audit['allocation_changed']=bool(audit['changed_projections'])
     atomic_json(out/'allocation-audit.json',audit)
     return recipe,audit
 
 
+def robust(policy,measurements,rfn,output,min_rank=.75,max_disagreement=.25):
+    import numpy as np
+    from exact_allocation import solve
+    out=Path(output);out.mkdir(parents=True,exist_ok=True);tables=[];maps=[];audits=[]
+    for i,measurement in enumerate(measurements):
+        _,upstream=optimize(policy,measurement,rfn,out/f'replicate-{i}',allow_unchanged=True)
+        table=read(out/f'replicate-{i}/predicted-kl.json');recipe,audit=solve(policy,table)
+        tables.append({r['key']:r for r in table['tensors']});maps.append(recipe);audits.append(audit)
+        atomic_json(out/f'replicate-{i}/exact-audit.json',dict(audit,upstream_prediction=upstream['predicted_flexible_candidate']))
+    require(len(tables)==2,'Require two independent replicates')
+    flexible=[r for r in policy['projections'] if len(r['allowed_k'])==2]
+    def ranks(values):
+        order=np.argsort(values,kind='stable');result=np.empty(len(values),float);start=0
+        while start<len(values):
+            end=start+1
+            while end<len(values) and values[order[end]]==values[order[start]]:end+=1
+            result[order[start:end]]=(start+end-1)/2;start=end
+        return result
+    densities=[]
+    for table in tables:densities.append(np.array([(table[r['source_key']]['kld']['2']-table[r['source_key']]['kld']['3'])/(r['ic']*r['oc']) for r in flexible]))
+    ra,rb=map(ranks,densities);correlation=float(np.corrcoef(ra,rb)[0,1])
+    disagreement=sum(r['ic']*r['oc'] for r in flexible if maps[0]['tensors'][r['source_key']]!=maps[1]['tensors'][r['source_key']])
+    denominator=sum(r['ic']*r['oc'] for r in flexible);fraction=disagreement/denominator
+    stability=dict(rank_spearman=correlation,width_disagreement_weight_fraction=fraction,min_rank=min_rank,max_disagreement=max_disagreement,
+                   passed=bool(np.isfinite(correlation) and correlation>=min_rank and fraction<=max_disagreement))
+    atomic_json(out/'stability.json',stability)
+    require(stability['passed'],'Sensitivity ranking is unstable; expand/review measurements before full factors')
+    merged=dict(tensors=[])
+    for key,item in tables[0].items():
+        merged['tensors'].append(dict(item,kld={str(k):sum(t[key]['kld'][str(k)] for t in tables)/2 for k in (2,3)}))
+    exact,audit=solve(policy,merged);check=validate_recipe(policy,exact)
+    exact.update(target_bpw=policy['body_bits']/sum(r['ic']*r['oc'] for r in policy['projections']),
+                 achieved_bpw=check['body_bits']/sum(r['ic']*r['oc'] for r in policy['projections']))
+    for table in tables:
+        base=sum(table[r['source_key']]['kld'][str(r['k'])] for r in flexible)
+        candidate=sum(table[r['source_key']]['kld'][str(exact['tensors'][r['source_key']])] for r in flexible)
+        require(candidate<=base+1e-12,'Mean recipe regresses one independent sensitivity replicate')
+    fixed=dict(target_bpw=exact['target_bpw'],head_bits=16,tensors={'*':16,**{r['source_key']:r['k'] for r in policy['projections']}})
+    atomic_json(out/'predicted-kl-mean.json',merged);atomic_json(out/'recipe.yaml',exact);atomic_json(out/'fixed-recipe.yaml',fixed)
+    atomic_json(out/'allocation-audit.json',dict(audit,stability=stability,budget_check=check,solver='exact discrete additive-cost DP',
+       allocation_changed=bool(check['changed_projections']),unchanged_control_permitted=True,not_measured_model_KLD=True))
+    return exact,audit
+
+
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--contract',required=True);p.add_argument('--measurement',required=True)
-    p.add_argument('--rfn',required=True);p.add_argument('--out',required=True);a=p.parse_args()
-    _,audit=optimize(read(a.contract),read(a.measurement),read(a.rfn),a.out);print(audit)
+    p.add_argument('--rfn',required=True);p.add_argument('--out',required=True)
+    p.add_argument('--replicate');a=p.parse_args()
+    if a.replicate:_,audit=robust(read(a.contract),[read(a.measurement),read(a.replicate)],read(a.rfn),a.out)
+    else:_,audit=optimize(read(a.contract),read(a.measurement),read(a.rfn),a.out,allow_unchanged=True)
+    print(audit)
