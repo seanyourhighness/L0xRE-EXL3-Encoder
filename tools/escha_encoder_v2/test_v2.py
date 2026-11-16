@@ -75,6 +75,24 @@ class AllocationTests(unittest.TestCase):
 
 
 class GradientTests(unittest.TestCase):
+    def test_saved_activation_cache_preserves_views_and_versions(self):
+        import torch
+        from hf_stream import Streaming
+        class Tiny(torch.nn.Module):
+            def __init__(self):super().__init__();self.identity=torch.nn.Identity()
+            def get_input_embeddings(self):return self.identity
+            def get_output_embeddings(self):return self.identity
+        stream=Streaming(Tiny(),'cpu')
+        try:
+            x=torch.arange(16,dtype=torch.float32).reshape(4,4)
+            a=stream.pack(x);b=stream.pack(x)
+            self.assertEqual(a[0].data_ptr(),b[0].data_ptr());self.assertEqual(stream.cache_hits,1)
+            view=stream.pack(x.T);torch.testing.assert_close(view[0],x.T)
+            x.add_(100);changed=stream.pack(x)
+            torch.testing.assert_close(a[0],torch.arange(16,dtype=torch.float32).reshape(4,4))
+            torch.testing.assert_close(changed[0],x);self.assertNotEqual(changed[0].data_ptr(),a[0].data_ptr())
+        finally:stream.close()
+
     def test_cpu_backed_saved_tensors_preserve_forward_and_input_gradient(self):
         import torch
         from hf_stream import Streaming

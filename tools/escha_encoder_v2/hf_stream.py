@@ -6,11 +6,14 @@ Only parameter residency and autograd's saved-tensor storage change.
 from contextlib import contextmanager
 import re
 import torch
+from torch.multiprocessing.reductions import StorageWeakRef
 
 
 class Streaming:
     def __init__(self,model,device='cuda:0'):
         self.model=model;self.device=torch.device(device);self.registry={};self.handles=[];self.saved_bytes=0
+        self.saved_cache={};self.cache_hits=0;self.current_module=None
+        names={id(module):name for name,module in model.named_modules()}
         blocks=[]
         for name,module in model.named_modules():
             if re.search(r'(?:^|\.)layers\.\d+$',name) and not any(s in name for s in ('visual','vision','mtp','audio')):
@@ -27,6 +30,7 @@ class Streaming:
         self.cpu={id(p):p.detach().cpu() for p in model.parameters()}
         self.buffers={id(m):{n:b.detach().cpu() for n,b in m.named_buffers(recurse=False)} for m in model.modules()}
         def enter(module,args):
+            self.current_module=names.get(id(module),'unknown')
             ids=[];module._escha_saved_ids=ids
             for param in module.parameters():
                 cpu=self.cpu[id(param)];gpu=cpu.to(self.device)
@@ -43,7 +47,7 @@ class Streaming:
             self.handles.append(module.register_forward_pre_hook(enter))
             self.handles.append(module.register_forward_hook(leave,always_call=True))
         def move_inputs(module,args,kwargs):
-            self.saved_bytes=0
+            self.saved_bytes=0;self.saved_cache.clear();self.cache_hits=0
             def move(x):return x.to(self.device) if isinstance(x,torch.Tensor) else x
             return tuple(move(x) for x in args),{k:move(v) for k,v in kwargs.items()}
         self.handles.append(model.register_forward_pre_hook(move_inputs,with_kwargs=True))
@@ -55,9 +59,17 @@ class Streaming:
             if value.dtype!=cpu.dtype:raise ValueError('Saved parameter view dtype differs')
             backed=cpu.as_strided(value.shape,value.stride(),cpu.storage_offset()+value.storage_offset()-base_offset)
         else:
+            # A StorageWeakRef identifies the actual C++ allocation without
+            # retaining its GPU memory. data_ptr alone can be reused by CUDA.
+            key=(StorageWeakRef(value.untyped_storage()),value.storage_offset(),tuple(value.shape),
+                 tuple(value.stride()),value.dtype,value.device,value._version)
+            if key in self.saved_cache:
+                self.cache_hits+=1;return self.saved_cache[key],value.device
             self.saved_bytes+=value.numel()*value.element_size()
-            if self.saved_bytes>24*1024**3:raise MemoryError('Saved activations exceed the24GiB offload budget; stop before a host OOM')
-            backed=value.detach().to('cpu',copy=value.device.type!='cpu')
+            if self.saved_bytes>24*1024**3:
+                raise MemoryError(f'Saved unique activations exceed24GiB at {self.current_module}; duplicate hits={self.cache_hits}; stop before host OOM')
+            backed=value.detach().to('cpu',copy=True)
+            self.saved_cache[key]=backed
         return backed,value.device
 
     def unpack(self,saved):
@@ -71,6 +83,7 @@ class Streaming:
         for handle in self.handles:handle.remove()
         for param in self.model.parameters():param.data=self.cpu[id(param)]
         self.registry.clear()
+        self.saved_cache.clear()
 
 
 def cpu_model(args,devices):
