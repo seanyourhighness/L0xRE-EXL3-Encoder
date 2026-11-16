@@ -159,6 +159,17 @@ class GradientTests(unittest.TestCase):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_teacher_cases_require_scored_assistant_tokens_inside_prefix(self):
+        from check_teacher import cases
+        from types import SimpleNamespace
+        docs=[dict(tokens=3000,score_from=0,row0=i*3000) for i in range(3)]
+        mask=np.zeros(9000,bool)
+        for i in range(3):mask[i*3000+2200:i*3000+2500]=True
+        reference=SimpleNamespace(docs=docs,gen=mask)
+        selection=[dict(category=c) for c in ('code','tools','reasoning')]
+        with self.assertRaises(ValueError):cases(reference,selection,2048)
+        self.assertEqual(len(cases(reference,selection,4096)),3)
+
     def test_sensitivity_replicates_balance_critical_domains_without_overlap(self):
         from sensitivity_data import select
         records=[dict(category=category,prompt_sha256=str(i)+category) for category in ('code','tools','reasoning','web','math','agentic') for i in range(12)]
