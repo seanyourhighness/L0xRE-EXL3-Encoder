@@ -95,7 +95,8 @@ def main():
     identity=dict(models={k:sha(v) for k,v in models.items()},runtime_sha256=sha(runtime_file),
                   fixture_sha256=sha(fixture_file),script_sha256=sha(__file__),
                   task_manifest_sha256=sha(assets/'TASK-MANIFEST.json'),
-                  harness_sha256=sha(assets/'tools/benchlocal099_cli_v1.py'),
+                  harness_sha256=sha(Path(__file__).with_name('club_cli.py')),
+                  catalog_manifest_sha256=sha(root.parent/'benchlocal099/MANIFEST.json'),
                   draft_sha256=sha(draft),order=['baseline','candidate','candidate','baseline'],
                   output_tokens=128,documents=20)
     protocol=out/'protocol.json'
@@ -143,9 +144,10 @@ def main():
                 club.append(result);continue
             with server(runtime,model,draft,folder,host,mode) as (endpoint,session):
                 env=dict(os.environ,URL=endpoint,MODEL='L0xRE-27b-Low',QUALITY_RECORD='0',PYTHONUTF8='1',
+                         L0XRE_BENCHLOCAL_SOURCE=str(root.parent/'benchlocal099'),
                          NO_PROXY=host+',127.0.0.1,localhost',no_proxy=host+',127.0.0.1,localhost')
                 for key in ('LD_PRELOAD','LD_LIBRARY_PATH','OPENAI_API_KEY','BENCHLOCAL_API_KEY','BENCHLOCAL_HISTORY_FILE'):env.pop(key,None)
-                command=['/usr/bin/python3',str(assets/'tools/benchlocal099_cli_v1.py'),'run','--full','--endpoint',endpoint,
+                command=['/usr/bin/python3',str(Path(__file__).with_name('club_cli.py')),'run','--full','--endpoint',endpoint,
                          '--model','L0xRE-27b-Low','--output','markdown','--progress',
                          '--no-thinking' if mode=='off' else '--enable-thinking','--max-tokens','4096','--thinking-max-tokens','16384',
                          '--save-json',str(folder/'result.json'),'--incremental','--sandbox-log-dir',str(folder/'sandbox-logs'),
