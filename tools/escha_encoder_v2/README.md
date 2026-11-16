@@ -177,7 +177,7 @@ This never removes V1, B02-A2, calibration sources, factors or final weights.
 
 A source audit found B02-A2 differs from the original V1 geometry template in all
 three output-head tensors (codes/scales/zero-points), while embeddings and output
-norm match. V2 exports therefore preserve **B02-A2's entire nonbody payload**;
+norm match. Primary V2 exports preserve **B02-A2's entire nonbody payload**;
 the400coded body projections are still fitted from original BF16 source, within
 the same K2/K3 geometry/byte contract. Native role fixtures retain the original
 geometry template solely as a format/dispatch test.
@@ -187,7 +187,12 @@ tensors, then measures a labeled V1-body/production-head transplant. There is no
 new vocabulary fitting, width, codebook or runtime change. Native results compare
 V2 with B02-A2, raw V1, and this head-matched control. That control is eligible
 for the same development/task/speed/final-holdout gates; it is not silently discarded
-if costly fitting fails to improve it. Production remains untouched.
+if costly fitting fails to improve it. Each fitted body also receives a paired
+native comparison of the two **existing** original/production head payloads;
+there is no assumption that a head fitted on one body must win on another.
+Only the better eligible head/body variant is retained as a full GGUF; the other
+is exactly reconstructable from that identical fitted body and its pinned head
+donor, with all native results and hashes retained. Production remains untouched.
 
 Compiled shards retain every encoded weight and their hash manifest before
 redundant per-module quantization/state scratch is reclaimed. Final GGUFs and

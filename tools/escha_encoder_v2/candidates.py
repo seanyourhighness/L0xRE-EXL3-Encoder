@@ -29,9 +29,10 @@ def native_gate(report,require_critical=True):
 
 def cleanup(candidate):
     """Only remove reproducible scratch after verified final GGUF + native output."""
-    candidate=Path(candidate);receipt=read(candidate/'native.complete.json')
-    require(sha(candidate/'quant.gguf')==receipt['candidate_sha256'],'Cannot reclaim scratch before verified native candidate')
+    candidate=Path(candidate)
     if (candidate/'scratch-cleanup.json').exists():return
+    receipt=read(candidate/'native.complete.json')
+    require(sha(candidate/'quant.gguf')==receipt['candidate_sha256'],'Cannot reclaim scratch before verified native candidate')
     removed=[]
     for name in ('conversion/qtensors','conversion/ckpt','conversion/ckpt_old','converted','export-checkpoints'):
         path=candidate/name
@@ -114,11 +115,11 @@ def run(a):
                 '--template-sha256',plan['template_sha256'],'--workers',str(plan['pack_workers'])],
                 [candidate/'quant.gguf',candidate/'quant.gguf.receipt.json'],timeout=24*3600)
             s.run(label+'-native',[python,here/'qualify.py','--plan',path,'--native-only'],[candidate/'native.complete.json'],timeout=4*3600)
-        report=read(candidate/'paired-B02-A2.json');gate=native_gate(report)
-        record=dict(label=label,model=str(candidate/'quant.gguf'),sha256=sha(candidate/'quant.gguf'),mean=report['candidate_mean'],gate=gate,
-                    native_report_sha256=sha(candidate/'paired-B02-A2.json'))
-        records.append(record);atomic_json(root/'development-candidates.json',dict(candidates=records,final_holdout_opened=False))
         cleanup(candidate)
+        from head_variants import compare
+        chosen=compare(plan,candidate)
+        record=dict(chosen,label=label)
+        records.append(record);atomic_json(root/'development-candidates.json',dict(candidates=records,final_holdout_opened=False))
         print('NATIVE_CANDIDATE',record,flush=True)
     eligible=[r for r in records if r['gate']['passed']]
     if not eligible:

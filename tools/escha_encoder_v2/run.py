@@ -150,7 +150,7 @@ def run(a):
     for pattern in ('conversion/qtensors/*.safetensors','converted/*.safetensors','export-checkpoints/*/*.npy',
                     'conversion/ckpt*/*.safetensors','*.gguf','role-probe/*.gguf','candidates/*/*.gguf',
                     'candidates/*/conversion/qtensors/*.safetensors','candidates/*/converted/*.safetensors',
-                    'candidates/*/export-checkpoints/*/*.npy','candidates/*/conversion/ckpt*/*.safetensors'):
+                    'candidates/*/export-checkpoints/*/*.npy','candidates/*/conversion/ckpt*/*.safetensors','candidates/*/original-head/*.gguf'):
         for f in root.glob(pattern):
             st=f.stat();key=(st.st_dev,st.st_ino)
             if key not in seen and st.st_dev==root.stat().st_dev:occupied+=st.st_size;seen.add(key)
