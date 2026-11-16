@@ -113,6 +113,10 @@ def main():
     if not output.exists():
         workflow.export_model(argparse.Namespace(work=work,checkpoint=work/'converted',output=output,
                                                projection=None,layer=None))
+    exported=json.loads(Path(str(output)+'.receipt.json').read_text())
+    require(exported['full_model'] and exported['export']['bytes']==8619127680,
+            'Expected a complete fixed-size Escha export')
+    require(sha(output)==exported['export']['sha256'],'Full exported model changed')
     result=qualify('full-development116',output,assets/'data/development-expanded-v1')
     baseline=assets/'evidence/stacking-loop/B02/A2/full116.json'
     comparison=root/'paired-development116.json'

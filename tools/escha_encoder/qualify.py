@@ -117,6 +117,9 @@ def main():
                         run['samples'].append(sample)
                     print('DFLASH_DOCUMENT',index,arm,case['id'],flush=True)
             run['complete']=True;atomic_json(receipt,run)
+        expected={(case['id'],phase) for case in fixture['cases'] for phase in ('first','reuse')}
+        require(len(run['samples'])==40 and {(x['id'],x['phase']) for x in run['samples']}==expected,
+                'Timing run is missing paired document/phase observations')
         runs.append(run)
     ratios=[]
     for case in fixture['cases']:
@@ -141,6 +144,7 @@ def main():
             folder=out/'club150'/(arm+'-'+mode);receipt=folder/'measurement.json'
             if receipt.exists():
                 result=json.loads(receipt.read_text());require(result['identity']==identity,'Club resume changed')
+                require(result['result_sha256']==sha(folder/'result.json'),'Saved Club result changed')
                 club.append(result);continue
             with server(runtime,model,draft,folder,host,mode) as (endpoint,session):
                 env=dict(os.environ,URL=endpoint,MODEL='L0xRE-27b-Low',QUALITY_RECORD='0',PYTHONUTF8='1',
